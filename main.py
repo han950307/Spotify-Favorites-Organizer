@@ -5,6 +5,7 @@ import sys
 import secrets
 import datetime
 import re
+import unicodecsv
 import operator
 import csv
 import codecs
@@ -15,6 +16,65 @@ import spotipy.client as client
 
 # developing on windows sucks!
 from Crypto.Cipher import DES
+import cStringIO
+
+
+reload(sys)
+sys.setdefaultencoding("utf-8")
+
+
+class UTF8Recoder:
+
+    def __init__(self, f, encoding):
+        self.reader = codecs.getreader(encoding)(f)
+
+    def __iter__(self):
+        return self
+
+    def next(self):
+        return self.reader.next().encode("utf-8")
+
+
+class UnicodeReader:
+
+    def __init__(self, f, dialect=csv.excel, encoding="utf-8-sig", **kwds):
+        f = UTF8Recoder(f, encoding)
+        self.reader = csv.reader(f, dialect=dialect, **kwds)
+
+    def next(self):
+        '''next() -> unicode
+        This function reads and returns the next line as a Unicode string.
+        '''
+        row = self.reader.next()
+        return [unicode(s, "utf-8") for s in row]
+
+    def __iter__(self):
+        return self
+
+
+class UnicodeWriter:
+
+    def __init__(self, f, dialect=csv.excel, encoding="utf-8-sig", **kwds):
+        self.queue = cStringIO.StringIO()
+        self.writer = csv.writer(self.queue, dialect=dialect, **kwds)
+        self.stream = f
+        self.encoder = codecs.getincrementalencoder(encoding)()
+
+    def writerow(self, row):
+        '''writerow(unicode) -> None
+        This function takes a Unicode string and encodes it to the output.
+        '''
+        self.writer.writerow([s.encode("utf-8") for s in row])
+        data = self.queue.getvalue()
+        data = data.decode("utf-8")
+        data = self.encoder.encode(data)
+        self.stream.write(data)
+        self.queue.truncate(0)
+
+    def writerows(self, rows):
+        for row in rows:
+            self.writerow(row)
+
 
 class SpotifyManager(object):
     # with open("../cipherkey") as f:
@@ -32,6 +92,7 @@ class SpotifyManager(object):
     REDIRECT_URI = secrets.REDIRECT_URI
     USERNAME = secrets.USERNAME
 
+    OLD_LIKES_NAMES = ["Old Likes", "Old KPOP"]
     DATA_FILENAME = "song_data.csv"
 
     SCOPE = "playlist-read-private playlist-read-collaborative playlist-modify-public playlist-modify-private user-library-read"
@@ -58,6 +119,11 @@ class SpotifyManager(object):
             self.spotify = client.Spotify(auth=self.token)
         else:
             raise ValueError("Can't get token for {}".format(self.USERNAME))
+
+    def unicode_csv_reader(utf8_data, dialect=csv.excel, **kwargs):
+        csv_reader = csv.reader(utf8_data, dialect=dialect, **kwargs)
+        for row in csv_reader:
+            yield [unicode(cell, 'utf-8') for cell in row]
 
     def get_playlist_tracks_from_spotify(self, playlist):
         """
@@ -166,7 +232,7 @@ class SpotifyManager(object):
         """
         literally retrieves an info from playlist jsons and writes a line.
         """
-        writestr = '"","",'
+        writestr = '"Song Name","Song URI",'
         for pl in playlists:
             if element == "id":
                 pl_elem = self.get_playlist_id(pl)
@@ -187,91 +253,37 @@ class SpotifyManager(object):
 
     def make_csv_from_spotify(self):
         track_uri_to_playlist_ids = self.get_data_from_spotify()
-        return self.make_csv(track_uri_to_playlist_ids)
-
-    def pull_data_from_spotify(self, readable=False):
-        """
-        generates a local csv with my spotify playlists.
-        """
-        my_playlists = self.get_my_playlists()
-        cur_date = datetime.datetime.now()
-        date_str = re.sub(r"[ \-\:\.]", "", str(cur_date))[:13]
-        outfile_name = "songlist" + date_str + ".csv"
-        outfile = codecs.open(outfile_name, "w", "utf-8")
-        # If the file exists, make a backup.
-        data_sheet_exists = True
         if not os.path.isfile(self.DATA_FILENAME):
-            data_sheet_exists = False
-
-        # different logic depending on whether datasheet exists.
-        if not data_sheet_exists:
-            data_outfile = codecs.open(self.DATA_FILENAME, "w", "utf-8")
-        else:
-            # make dict from datasheet.
-            pass
-
-        # self.write_playlist_info(outfile, playlists, "name")
-        # self.write_playlist_info(outfile, playlists, "uri")
-        # self.write_playlist_info(outfile, playlists, "id")
-
-        if not data_sheet_exists:
-            # self.write_playlist_info(data_outfile, playlists, "uri")
-            pass
-
-        self.get_my_tracks_from_my_playlists()
-
-        for t_uri, (name, track) in self.track_uri_to_track:
-            pl_ids = self.track_uri_to_playlist_ids[t_uri]
-            indeces = set()
-            writestr = ""
-
-            writestr += u'"{}",'.format(name)
-            writestr += u'"{}",'.format(t_uri)
-
-            for pl_id in playlist_id_to_playlist.keys():
-                for pl_id in pl_ids:
-                    writestr += u'"{}",'.format(self.playlist_id_to_playlist[t_uri]["name"])
-                else:
-                    writestr += u'"",'
-
-            self.write_line(outfile, writestr)
-
-            if not data_sheet_exists:
-                self.write_line(data_outfile, writestr)
-        
-        outfile.close()
-
-        if not data_sheet_exists:
-            data_outfile.close()
-
-        self.update_local_data(outfile_name)
+            self.make_csv(track_uri_to_playlist_ids, self.DATA_FILENAME)
+        csv_path = self.make_csv(track_uri_to_playlist_ids)
+        self.update_local_data(csv_path)
+        return csv_path
 
     def load_csv(self, csv_path):
         """
         Reads from csv and returns a dict containing
-        track uri to playlist names
+        track uri to playlist ids
         """
         track_uri_to_playlist_ids = dict()
         first_row = True
         index_to_pl_name = dict()
 
-        with codecs.open(csv_path, "r", "utf-8") as csvfile:
-            reader = csv.reader(csvfile, delimiter=',')
-            for row in reader:
-                if first_row:
-                    ind = 0
-                    first_row = False
-                    for elem in row:
-                        index_to_pl_name[ind] = elem.strip('"')
-                        ind += 1
-                    continue
-                t_uri = row[1].strip('"')
-                t_playlist_ids = []
-                for k in range(2, len(row)):
-                    elem = row[k].strip('"')
-                    if elem:
-                        t_playlist_ids.append(self.playlist_name_to_playlist_id[index_to_pl_name[k]])
-                track_uri_to_playlist_ids[t_uri] = t_playlist_ids
+        reader = UnicodeReader(open(csv_path, "rb"))
+        for row in reader:
+            if first_row:
+                ind = 0
+                first_row = False
+                for elem in row:
+                    index_to_pl_name[ind] = elem.strip('"')
+                    ind += 1
+                continue
+            t_uri = row[1].strip('"')
+            t_playlist_ids = set()
+            for k in range(2, len(row)):
+                elem = row[k].strip('"')
+                if elem:
+                    t_playlist_ids.add(self.playlist_name_to_playlist_id[index_to_pl_name[k]])
+            track_uri_to_playlist_ids[t_uri] = t_playlist_ids
 
         return track_uri_to_playlist_ids
 
@@ -311,8 +323,10 @@ class SpotifyManager(object):
             tot = len(my_playlists)
 
             while tot > 0:
+                write = False
                 for k in range(len(indeces)):
-                    write = True if indeces[k] == 0 else False
+                    if indeces[k] == 0:
+                        write = True
                     indeces[k] -= 1
                 if write:
                     writestr += '"{}",'.format("x")
@@ -325,17 +339,65 @@ class SpotifyManager(object):
         outfile.close()
         return outfile_name
 
+    def is_old(self, track_uri, track_uri_to_playlist_ids):
+        """
+        checks if a track uri is an old track.
+        """
+        old_likes_pl_ids = []
+        for name in self.OLD_LIKES_NAMES:
+            old_likes_pl_ids.append(self.playlist_name_to_playlist_id[name])
+
+        for old_likes_pl_id in old_likes_pl_ids:
+            try:
+                if old_likes_pl_id in track_uri_to_playlist_ids[track_uri]:
+                    return (True, old_likes_pl_id)
+            except KeyError:
+                return (False, "")
+
+        return (False, "")
+
     def update_local_data(self, csv_path):
         """
-        uses the given csv_path to update the local data sheet
+        uses the given csv_path to update the local data sheet.
+        Run this after updating the csv to update local data sheet.
+        The result of this will be used as a reference to syncing
+        spotify playlists.
         """
-        track_uri_to_playlist_names = self.load_csv(csv_path)
-        track_uri_to_playlist_names_local = self.load_csv(self.DATA_FILENAME)
+        track_uri_to_playlist_ids = self.load_csv(csv_path)
+        track_uri_to_playlist_ids_local = self.load_csv(self.DATA_FILENAME)
+        updated_data = dict()
 
+        for track_uri in track_uri_to_playlist_ids.keys():
+            (is_old, old_playlist_id) = self.is_old(track_uri, track_uri_to_playlist_ids)
+            (is_old_local, old_playlist_id_local) = self.is_old(track_uri, track_uri_to_playlist_ids_local)
+            # merge the playlists and only remove old if remote is not old.
+            updated_data[track_uri] = set()
+            try:
+                # if remote is not old and local is old, then merge and remove local old
+                if is_old_local and not is_old:
+                    for pl_id in track_uri_to_playlist_ids[track_uri]:
+                        updated_data[track_uri].add(pl_id)
+                    for pl_id in track_uri_to_playlist_ids_local[track_uri]:
+                        updated_data[track_uri].add(pl_id)
+                    updated_data[track_uri].remove(old_playlist_id_local)
+                # if remote is old, then update with local and add remote old
+                elif is_old:
+                    for pl_id in track_uri_to_playlist_ids_local[track_uri]:
+                        updated_data[track_uri].add(pl_id)
+                    updated_data[track_uri].add(old_playlist_id)
+                # if remote is not old and local is not old, then update with remote.
+                else:
+                    for pl_id in track_uri_to_playlist_ids[track_uri]:
+                        updated_data[track_uri].add(pl_id)
+            # If for some reason you can't find it, then use downloaded data.
+            except KeyError:
+                for pl_id in track_uri_to_playlist_ids[track_uri]:
+                    updated_data[track_uri].add(pl_id)
 
+        self.make_csv(updated_data, self.DATA_FILENAME)
+        self.make_csv(updated_data, csv_path)
 
-
-    def update_spotify(self, csv_path):
+    def update_spotify(self, csv_path, really_remove=False):
         """
         Updates spotify playlists from local csv.
         """
@@ -349,12 +411,72 @@ class SpotifyManager(object):
         # - when pushing, update data sheet with csv_path
         # - when i pull, if in old likes and in local data, use local data
         # - when i pull, if not in old likes, then update with spotify data
-        cur_date = datetime.datetime.now()
-        date_str = re.sub(r"[ \-\:\.]", "", str(cur_date))[:13]
 
         if os.path.isfile(self.DATA_FILENAME):
-            shutil.copyfile(self.DATA_FILENAME, self.DATA_FILENAME.strip(".csv") + date_str + ".csv")
+            cur_date = datetime.datetime.now()
+            date_str = re.sub(r"[ \-\:\.]", "", str(cur_date))[:13]
+            cur_spotify_data = self.get_data_from_spotify()
+            self.update_local_data(csv_path)
+            data = self.load_csv(self.DATA_FILENAME)
+            shutil.copyfile(self.DATA_FILENAME, self.DATA_FILENAME[:-4] + date_str + ".csv")
         else:
             raise ValueError("data sheet file not found. Please pull first.")
 
-        pass
+        playlist_id_to_tracks_add = dict()
+        playlist_id_to_tracks_remove = dict()
+
+        # Sync to spotify.
+        for track_uri, playlist_ids in data.iteritems():
+            is_old, old_playlist_id = self.is_old(track_uri, data)
+            track_id = self.get_id_from_uri(track_uri)
+
+            # If it's in any of old likes, remove it from all spotify playlists that contain it.
+            if is_old:
+                for playlist_id in playlist_ids:
+                    if not old_playlist_id == playlist_id:
+                        if not playlist_id in playlist_id_to_tracks_remove:
+                            playlist_id_to_tracks_remove[playlist_id] = set()
+                        playlist_id_to_tracks_remove[playlist_id].add(track_id)
+                continue
+
+            # Else if it's in local and not in remote, add
+            for playlist_id in playlist_ids:
+                if playlist_id not in cur_spotify_data[track_uri]:
+                    if not playlist_id in playlist_id_to_tracks_add:
+                        playlist_id_to_tracks_add[playlist_id] = set()
+                    playlist_id_to_tracks_add[playlist_id].add(track_id)
+
+            # Else if it's in remote and not in local, remove
+            for playlist_id in cur_spotify_data[track_uri]:
+                if playlist_id not in data[track_uri]:
+                    if not playlist_id in playlist_id_to_tracks_remove:
+                        playlist_id_to_tracks_remove[playlist_id] = set()
+                    playlist_id_to_tracks_remove[playlist_id].add(track_id)
+
+        print "ADD THE FOLLOWING"
+        for playlist_id, tracks in playlist_id_to_tracks_add.iteritems():
+            if really_remove:
+                results = self.spotify.user_playlist_add_tracks(self.USERNAME, playlist_id, list(tracks))
+            print self.playlist_id_to_playlist_name[playlist_id]
+            for t in tracks:
+                track_name = self.track_uri_to_track["spotify:track:"+t][0]
+                try:
+                    if not isinstance(track_name, unicode):
+                        track_name = unicode(track_name,"utf-8")
+                    print u"\t{}".format(track_name)
+                except:
+                    print u"\tUNICODE ERROR SORRY CANT PRINT NAME"
+
+        print "REMOVE THE FOLLOWING"
+        for playlist_id, tracks in playlist_id_to_tracks_remove.iteritems():
+            if really_remove:
+                self.spotify.user_playlist_remove_all_occurrences_of_tracks(self.USERNAME, playlist_id, list(tracks))
+            print self.playlist_id_to_playlist_name[playlist_id]
+            for t in tracks:
+                track_name = self.track_uri_to_track["spotify:track:"+t][0]
+                try:
+                    if not isinstance(track_name, unicode):
+                        track_name = unicode(track_name,"utf-8")
+                    print u"\t{}".format(track_name)
+                except:
+                    print u"\tUNICODE ERROR SORRY CANT PRINT NAME"
