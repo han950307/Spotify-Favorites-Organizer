@@ -77,20 +77,20 @@ class UnicodeWriter:
 
 
 class SpotifyManager(object):
-    with open("../cipherkey") as f:
-        cipherkey = f.read()
+    # with open("../cipherkey") as f:
+    #     cipherkey = f.read()
 
-    des_obj = DES.new(cipherkey, DES.MODE_ECB)
+    # des_obj = DES.new(cipherkey, DES.MODE_ECB)
 
-    CLIENT_ID = des_obj.decrypt(secrets.CLIENT_ID).strip("!")
-    CLIENT_SECRET = des_obj.decrypt(secrets.CLIENT_SECRET).strip("!")
-    REDIRECT_URI = des_obj.decrypt(secrets.REDIRECT_URI).strip("!")
-    USERNAME = des_obj.decrypt(secrets.USERNAME).strip("!")
+    # CLIENT_ID = des_obj.decrypt(secrets.CLIENT_ID).strip("!")
+    # CLIENT_SECRET = des_obj.decrypt(secrets.CLIENT_SECRET).strip("!")
+    # REDIRECT_URI = des_obj.decrypt(secrets.REDIRECT_URI).strip("!")
+    # USERNAME = des_obj.decrypt(secrets.USERNAME).strip("!")
 
-    # CLIENT_ID = secrets.CLIENT_ID
-    # CLIENT_SECRET = secrets.CLIENT_SECRET
-    # REDIRECT_URI = secrets.REDIRECT_URI
-    # USERNAME = secrets.USERNAME
+    CLIENT_ID = secrets.CLIENT_ID
+    CLIENT_SECRET = secrets.CLIENT_SECRET
+    REDIRECT_URI = secrets.REDIRECT_URI
+    USERNAME = secrets.USERNAME
 
     OLD_LIKES_NAMES = ["Old Likes", "Old KPOP"]
     DATA_FILENAME = "song_data.csv"
@@ -367,7 +367,7 @@ class SpotifyManager(object):
         track_uri_to_playlist_ids_local = self.load_csv(self.DATA_FILENAME)
         updated_data = dict()
 
-        for track_uri in track_uri_to_playlist_ids.keys():
+        for track_uri in set(track_uri_to_playlist_ids.keys()) | set(track_uri_to_playlist_ids_local.keys()):
             (is_old, old_playlist_id) = self.is_old(track_uri, track_uri_to_playlist_ids)
             (is_old_local, old_playlist_id_local) = self.is_old(track_uri, track_uri_to_playlist_ids_local)
             # merge the playlists and only remove old if remote is not old.
@@ -391,8 +391,12 @@ class SpotifyManager(object):
                         updated_data[track_uri].add(pl_id)
             # If for some reason you can't find it, then use downloaded data.
             except KeyError:
-                for pl_id in track_uri_to_playlist_ids[track_uri]:
-                    updated_data[track_uri].add(pl_id)
+                try:
+                    for pl_id in track_uri_to_playlist_ids[track_uri]:
+                        updated_data[track_uri].add(pl_id)
+                except KeyError:
+                    for pl_id in track_uri_to_playlist_ids_local[track_uri]:
+                        updated_data[track_uri].add(pl_id)
 
         self.make_csv(updated_data, self.DATA_FILENAME)
         self.make_csv(updated_data, csv_path)
@@ -433,7 +437,7 @@ class SpotifyManager(object):
             # If it's in any of old likes, remove it from all spotify playlists that contain it.
             if is_old:
                 for playlist_id in playlist_ids:
-                    if not old_playlist_id == playlist_id:
+                    if not old_playlist_id == playlist_id and playlist_id in cur_spotify_data[track_uri]:
                         if not playlist_id in playlist_id_to_tracks_remove:
                             playlist_id_to_tracks_remove[playlist_id] = set()
                         playlist_id_to_tracks_remove[playlist_id].add(track_id)
