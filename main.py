@@ -77,20 +77,20 @@ class UnicodeWriter:
 
 
 class SpotifyManager(object):
-    # with open("../cipherkey") as f:
-    #     cipherkey = f.read()
+    with open("../cipherkey") as f:
+        cipherkey = f.read()
 
-    # des_obj = DES.new(cipherkey, DES.MODE_ECB)
+    des_obj = DES.new(cipherkey, DES.MODE_ECB)
 
-    # CLIENT_ID = des_obj.decrypt(secrets.CLIENT_ID).strip("!")
-    # CLIENT_SECRET = des_obj.decrypt(secrets.CLIENT_SECRET).strip("!")
-    # REDIRECT_URI = des_obj.decrypt(secrets.REDIRECT_URI).strip("!")
-    # USERNAME = des_obj.decrypt(secrets.USERNAME).strip("!")
+    CLIENT_ID = des_obj.decrypt(secrets.CLIENT_ID).strip("!")
+    CLIENT_SECRET = des_obj.decrypt(secrets.CLIENT_SECRET).strip("!")
+    REDIRECT_URI = des_obj.decrypt(secrets.REDIRECT_URI).strip("!")
+    USERNAME = des_obj.decrypt(secrets.USERNAME).strip("!")
 
-    CLIENT_ID = secrets.CLIENT_ID
-    CLIENT_SECRET = secrets.CLIENT_SECRET
-    REDIRECT_URI = secrets.REDIRECT_URI
-    USERNAME = secrets.USERNAME
+    # CLIENT_ID = secrets.CLIENT_ID
+    # CLIENT_SECRET = secrets.CLIENT_SECRET
+    # REDIRECT_URI = secrets.REDIRECT_URI
+    # USERNAME = secrets.USERNAME
 
     OLD_LIKES_NAMES = ["Old Likes", "Old KPOP"]
     DATA_FILENAME = "song_data.csv"
