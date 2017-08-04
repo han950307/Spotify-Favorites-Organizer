@@ -77,20 +77,15 @@ class UnicodeWriter:
 
 
 class SpotifyManager(object):
-    # with open("../cipherkey") as f:
-    #     cipherkey = f.read()
+    with open("../cipherkey") as f:
+        cipherkey = f.read()
 
-    # des_obj = DES.new(cipherkey, DES.MODE_ECB)
+    des_obj = DES.new(cipherkey, DES.MODE_ECB)
 
-    # CLIENT_ID = des_obj.decrypt(secrets.CLIENT_ID).strip("!")
-    # CLIENT_SECRET = des_obj.decrypt(secrets.CLIENT_SECRET).strip("!")
-    # REDIRECT_URI = des_obj.decrypt(secrets.REDIRECT_URI).strip("!")
-    # USERNAME = des_obj.decrypt(secrets.USERNAME).strip("!")
-
-    CLIENT_ID = secrets.CLIENT_ID
-    CLIENT_SECRET = secrets.CLIENT_SECRET
-    REDIRECT_URI = secrets.REDIRECT_URI
-    USERNAME = secrets.USERNAME
+    CLIENT_ID = des_obj.decrypt(secrets.CLIENT_ID).strip("!")
+    CLIENT_SECRET = des_obj.decrypt(secrets.CLIENT_SECRET).strip("!")
+    REDIRECT_URI = des_obj.decrypt(secrets.REDIRECT_URI).strip("!")
+    USERNAME = des_obj.decrypt(secrets.USERNAME).strip("!")
 
     OLD_LIKES_NAMES = ["Old Likes", "Old KPOP"]
     DATA_FILENAME = "song_data.csv"
@@ -125,7 +120,7 @@ class SpotifyManager(object):
         for row in csv_reader:
             yield [unicode(cell, 'utf-8') for cell in row]
 
-    def get_playlist_tracks_from_spotify(self, playlist):
+    def get_playlist_tracks_from_spotify(self, playlist, update=False):
         """
         Downloads the tracks from spotify using api
         """
@@ -139,6 +134,9 @@ class SpotifyManager(object):
             try:
                 self.track_uri_to_playlist_ids[t_uri]
             except KeyError:
+                self.track_uri_to_playlist_ids[t_uri] = set()
+
+            if update:
                 self.track_uri_to_playlist_ids[t_uri] = set()
             
             self.track_uri_to_track[t_uri] = (t["track"]["name"], t)
@@ -157,7 +155,11 @@ class SpotifyManager(object):
         try:
             tracks = self.playlist_id_to_tracks[pl_id]
         except (AttributeError, ValueError, KeyError):
-            tracks = self.get_playlist_tracks_from_spotify(playlist)
+            tracks = self.get_playlist_tracks_from_spotify(playlist, update)
+            self.playlist_id_to_tracks[pl_id] = tracks
+            update = False
+        if update:
+            tracks = self.get_playlist_tracks_from_spotify(playlist, update)
             self.playlist_id_to_tracks[pl_id] = tracks
 
         return tracks
@@ -168,7 +170,7 @@ class SpotifyManager(object):
         """
         output = []
 
-        my_playlists = self.get_my_playlists()
+        my_playlists = self.get_my_playlists(update)
         for pl in my_playlists:
             tracks = self.get_my_tracks_from_playlist(pl)
             for t in tracks:
@@ -203,6 +205,7 @@ class SpotifyManager(object):
         # only make the api request if update flag is passed in or
         # the variable isn't set.
         if update:
+            self.playlists = []
             playlists = self.spotify.user_playlists(self.USERNAME)
         elif self.playlists:
             output = self.playlists
@@ -242,17 +245,17 @@ class SpotifyManager(object):
 
         self.write_line(outfile, writestr)
 
-    def get_data_from_spotify(self):
+    def get_data_from_spotify(self, update=True):
         """
         returns a list of dict track uri to playlist ids
         from spotify
         """
-        self.get_my_playlists()
-        self.get_my_tracks_from_my_playlists()
+        self.get_my_playlists(update=update)
+        self.get_my_tracks_from_my_playlists(update=update)
         return self.track_uri_to_playlist_ids
 
     def make_csv_from_spotify(self):
-        track_uri_to_playlist_ids = self.get_data_from_spotify()
+        track_uri_to_playlist_ids = self.get_data_from_spotify(update=True)
         if not os.path.isfile(self.DATA_FILENAME):
             self.make_csv(track_uri_to_playlist_ids, self.DATA_FILENAME)
         csv_path = self.make_csv(track_uri_to_playlist_ids)
@@ -270,6 +273,8 @@ class SpotifyManager(object):
 
         reader = UnicodeReader(open(csv_path, "rb"))
         for row in reader:
+            if not row:
+                continue
             if first_row:
                 ind = 0
                 first_row = False
@@ -312,7 +317,11 @@ class SpotifyManager(object):
         for t_uri, pl_ids in data.iteritems():
             indeces = []
             writestr = ""
-            name = self.track_uri_to_track[t_uri][0]
+            try:
+                name = self.track_uri_to_track[t_uri][0]
+            except KeyError:
+                print "track uri {} name not found".format(t_uri) 
+                name = "NOT FOUND"
 
             for pl_id in pl_ids:
                 indeces.append(pl_id_to_index[pl_id])
@@ -352,7 +361,7 @@ class SpotifyManager(object):
                 if old_likes_pl_id in track_uri_to_playlist_ids[track_uri]:
                     return (True, old_likes_pl_id)
             except KeyError:
-                return (False, "")
+                return (False, old_likes_pl_id)
 
         return (False, "")
 
@@ -367,7 +376,7 @@ class SpotifyManager(object):
         track_uri_to_playlist_ids_local = self.load_csv(self.DATA_FILENAME)
         updated_data = dict()
 
-        for track_uri in set(track_uri_to_playlist_ids.keys()) | set(track_uri_to_playlist_ids_local.keys()):
+        for track_uri in (set(track_uri_to_playlist_ids.keys()) | set(track_uri_to_playlist_ids_local.keys())):
             (is_old, old_playlist_id) = self.is_old(track_uri, track_uri_to_playlist_ids)
             (is_old_local, old_playlist_id_local) = self.is_old(track_uri, track_uri_to_playlist_ids_local)
             # merge the playlists and only remove old if remote is not old.
@@ -419,10 +428,11 @@ class SpotifyManager(object):
         if os.path.isfile(self.DATA_FILENAME):
             cur_date = datetime.datetime.now()
             date_str = re.sub(r"[ \-\:\.]", "", str(cur_date))[:13]
-            cur_spotify_data = self.get_data_from_spotify()
+            cur_spotify_data = self.get_data_from_spotify(update=True)
             self.update_local_data(csv_path)
             data = self.load_csv(self.DATA_FILENAME)
-            shutil.copyfile(self.DATA_FILENAME, self.DATA_FILENAME[:-4] + date_str + ".csv")
+            if not really_remove:
+                shutil.copyfile(self.DATA_FILENAME, self.DATA_FILENAME[:-4] + date_str + ".csv")
         else:
             raise ValueError("data sheet file not found. Please pull first.")
 
@@ -437,10 +447,24 @@ class SpotifyManager(object):
             # If it's in any of old likes, remove it from all spotify playlists that contain it.
             if is_old:
                 for playlist_id in playlist_ids:
-                    if not old_playlist_id == playlist_id and playlist_id in cur_spotify_data[track_uri]:
+                    not_in_spotify = False
+                    try:
+                        not_in_spotify = not (playlist_id in cur_spotify_data[track_uri])
+                    except KeyError:
+                        not_in_spotify = True
+                    if not old_playlist_id == playlist_id and not not_in_spotify:
                         if not playlist_id in playlist_id_to_tracks_remove:
                             playlist_id_to_tracks_remove[playlist_id] = set()
                         playlist_id_to_tracks_remove[playlist_id].add(track_id)
+                    # Now add it to old likes
+                try:
+                    in_spotify = old_playlist_id in cur_spotify_data[track_uri]
+                except KeyError:
+                    in_spotify = False
+                if not in_spotify:
+                    if not playlist_id in playlist_id_to_tracks_add:
+                        playlist_id_to_tracks_add[old_playlist_id] = set()
+                    playlist_id_to_tracks_add[old_playlist_id].add(track_id)
                 continue
 
             # Else if it's in local and not in remote, add
@@ -463,13 +487,13 @@ class SpotifyManager(object):
                 results = self.spotify.user_playlist_add_tracks(self.USERNAME, playlist_id, list(tracks))
             print self.playlist_id_to_playlist_name[playlist_id]
             for t in tracks:
-                track_name = self.track_uri_to_track["spotify:track:"+t][0]
                 try:
+                    track_name = self.track_uri_to_track["spotify:track:"+t][0]
                     if not isinstance(track_name, unicode):
                         track_name = unicode(track_name,"utf-8")
                     print u"\t{}".format(track_name)
                 except:
-                    print u"\tUNICODE ERROR SORRY CANT PRINT NAME"
+                    print u"\tUNICODE ERROR SORRY CANT PRINT NAME or could not find"
 
         print "REMOVE THE FOLLOWING"
         for playlist_id, tracks in playlist_id_to_tracks_remove.iteritems():
@@ -477,7 +501,10 @@ class SpotifyManager(object):
                 self.spotify.user_playlist_remove_all_occurrences_of_tracks(self.USERNAME, playlist_id, list(tracks))
             print self.playlist_id_to_playlist_name[playlist_id]
             for t in tracks:
-                track_name = self.track_uri_to_track["spotify:track:"+t][0]
+                try:
+                    track_name = self.track_uri_to_track["spotify:track:"+t][0]
+                except KeyError:
+                    "spotify track {} not found".format(t)
                 try:
                     if not isinstance(track_name, unicode):
                         track_name = unicode(track_name,"utf-8")
