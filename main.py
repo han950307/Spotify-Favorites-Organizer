@@ -469,12 +469,28 @@ class SpotifyManager(object):
 
             # Else if it's in local and not in remote, add
             for playlist_id in playlist_ids:
-                if playlist_id not in cur_spotify_data[track_uri]:
+                try:
+                    not_in_spotify = not (playlist_id in cur_spotify_data[track_uri])
+                except KeyError:
+                    not_in_spotify = True
+                if not_in_spotify:
                     if not playlist_id in playlist_id_to_tracks_add:
                         playlist_id_to_tracks_add[playlist_id] = set()
                     playlist_id_to_tracks_add[playlist_id].add(track_id)
 
             # Else if it's in remote and not in local, remove
+            try:
+                if cur_spotify_data[track_uri]:
+                    not_in_spotify = False
+            except KeyError:
+                not_in_spotify = True
+
+            if not_in_spotify:
+                if not playlist_id in playlist_id_to_tracks_add:
+                    playlist_id_to_tracks_add[playlist_id] = set()
+                playlist_id_to_tracks_add[playlist_id].add(track_id)
+                continue
+
             for playlist_id in cur_spotify_data[track_uri]:
                 if playlist_id not in data[track_uri]:
                     if not playlist_id in playlist_id_to_tracks_remove:
